@@ -31,4 +31,9 @@ class FingerprintAuthController extends Controller
 
         return response()->json(['status' => 'fail', 'message' => 'Fingerprint not recognized.']);
     }
+
+    public function dashboard()
+    {
+        return view('dashboard');
+    }
 }

@@ -3,31 +3,13 @@
     <h2 class="title">Enroll New User</h2>
 
     <form @submit.prevent="submitEnrollment">
-      <input
-        type="text"
-        v-model="fullName"
-        placeholder="Full Name"
-        required
-        class="input"
-      />
-      <input
-        type="email"
-        v-model="email"
-        placeholder="Email Address"
-        required
-        class="input"
-      />
+      <input type="text" v-model="fullName" placeholder="Full Name" required class="input" />
+      <input type="email" v-model="email" placeholder="Email Address" required class="input" />
 
       <!-- Biometric Choice -->
       <div class="input">
-        <label>
-          <input type="radio" value="face" v-model="biometricChoice" />
-          Use Face
-        </label>
-        <label style="margin-left: 20px;">
-          <input type="radio" value="fingerprint" v-model="biometricChoice" />
-          Use Fingerprint
-        </label>
+        <label><input type="radio" value="face" v-model="biometricChoice" /> Use Face</label>
+        <label style="margin-left: 20px;"><input type="radio" value="fingerprint" v-model="biometricChoice" /> Use Fingerprint</label>
       </div>
 
       <center>
@@ -37,20 +19,10 @@
       </center>
 
       <div class="buttons">
-        <button
-          type="button"
-          @click="captureFace"
-          :disabled="biometricChoice !== 'face'"
-          class="capture-btn"
-        >
+        <button type="button" @click="captureFace" :disabled="biometricChoice !== 'face'" class="capture-btn">
           Capture Face
         </button>
-        <button
-          type="button"
-          @click="captureFingerprint"
-          :disabled="biometricChoice !== 'fingerprint'"
-          class="capture-btn"
-        >
+        <button type="button" @click="captureFingerprint" :disabled="biometricChoice !== 'fingerprint'" class="capture-btn">
           Capture Fingerprint
         </button>
       </div>
@@ -89,8 +61,7 @@ const loadFaceModels = async () => {
 };
 
 const startVideo = () => {
-  navigator.mediaDevices
-    .getUserMedia({ video: true })
+  navigator.mediaDevices.getUserMedia({ video: true })
     .then((stream) => {
       if (videoRef.value) {
         videoRef.value.srcObject = stream;
@@ -115,9 +86,9 @@ const captureFace = async () => {
     canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
     faceImage.value = canvas.toDataURL('image/jpeg');
 
-    message.value = '✅ Face captured successfully.';
+    message.value = "✅ Face captured successfully.";
   } else {
-    message.value = '❌ No face detected. Try again.';
+    message.value = "❌ No face detected. Try again.";
   }
 };
 
@@ -125,19 +96,19 @@ const captureFingerprint = async () => {
   try {
     const publicKey = {
       challenge: new Uint8Array(32),
-      rp: { name: 'Biometric App' },
+      rp: { name: "Biometric App" },
       user: {
         id: new TextEncoder().encode(email.value),
         name: email.value,
         displayName: fullName.value,
       },
-      pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
+      pubKeyCredParams: [{ alg: -7, type: "public-key" }],
       authenticatorSelection: {
-        authenticatorAttachment: 'platform',
-        userVerification: 'preferred',
+        authenticatorAttachment: "platform",
+        userVerification: "preferred",
       },
       timeout: 60000,
-      attestation: 'none',
+      attestation: "none"
     };
 
     const credential = await navigator.credentials.create({ publicKey });
@@ -150,31 +121,31 @@ const captureFingerprint = async () => {
     canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
     fingerprintTemplate.value = canvas.toDataURL('image/jpeg');
 
-    message.value = '✅ Fingerprint captured using WebAuthn.';
+    message.value = "✅ Fingerprint captured using WebAuthn.";
   } catch (error) {
     console.error('Fingerprint error:', error);
-    message.value = '❌ Fingerprint capture failed.';
+    message.value = "❌ Fingerprint capture failed.";
   }
 };
 
 const submitEnrollment = async () => {
   if (!fullName.value || !email.value) {
-    message.value = '❗ Please enter full name and email.';
+    message.value = "❗ Please enter full name and email.";
     return;
   }
 
   if (biometricChoice.value === 'face') {
     if (!faceDescriptor.value || !faceImage.value) {
-      message.value = '❗ Please capture a face image.';
+      message.value = "❗ Please capture a face image.";
       return;
     }
   } else if (biometricChoice.value === 'fingerprint') {
     if (!fingerprintCredential.value || !fingerprintTemplate.value) {
-      message.value = '❗ Please capture a fingerprint.';
+      message.value = "❗ Please capture a fingerprint.";
       return;
     }
   } else {
-    message.value = '❗ Invalid biometric choice.';
+    message.value = "❗ Invalid biometric choice.";
     return;
   }
 
@@ -196,7 +167,7 @@ const submitEnrollment = async () => {
     });
 
     if (response.ok) {
-      message.value = '✅ User enrolled successfully!';
+      message.value = "🎉 User enrolled successfully! Redirecting to authentication page...";
       // Clear form fields
       fullName.value = '';
       email.value = '';
@@ -208,13 +179,13 @@ const submitEnrollment = async () => {
       // Delay navigation to authentication page
       setTimeout(() => {
         router.push('/auth/');
-      }, 1000); // 3-second delay
+      }, 3000); // 3-second delay
     } else {
-      message.value = '❌ Enrollment failed. Try again.';
+      message.value = "❌ Enrollment failed. Try again.";
     }
   } catch (error) {
     console.error('Submit error:', error);
-    message.value = '❌ Enrollment failed.';
+    message.value = "❌ Enrollment failed.";
   }
 };
 
@@ -225,10 +196,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.title {
-  font-size: 1.8rem;
-  margin-bottom: 15px;
-  color: #333;
+h2 {
+  font-size: large;
+  font-style: bold;
 }
 .enrollment-form {
   max-width: 400px;
@@ -276,9 +246,6 @@ video {
 }
 .submit-btn:hover {
   background-color: #218838;
-}
-.success {
-  color: green;
 }
 .info-text {
   margin-top: 10px;

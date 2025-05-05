@@ -105,7 +105,7 @@ export default defineComponent({
     // If you're using Vuex or any state management, reset the user state here
 
     // Redirect to the login page
-    router.push('/login');
+    router.push('/auth/');
   } catch (error) {
     console.error('Error during logout:', error);
     // Handle errors appropriately
