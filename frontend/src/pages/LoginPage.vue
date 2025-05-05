@@ -16,8 +16,8 @@
     </div>
 
     <p class="help-text">
-      Unable to authenticate?
-      <router-link to="/enroll-user" class="admin-link">Contact the administrator.</router-link>
+      Already registered?
+      <router-link to="/enroll-user" class="admin-link">Enroll Now!</router-link>
     </p>
     <p class="message" :class="{ success: faceDetected, error: !faceDetected && message }">{{ message }}</p>
 
@@ -27,6 +27,7 @@
 
 <script>
 import { defineComponent, ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import * as faceapi from 'face-api.js';
 import { Fingerprint, Eye } from 'lucide-vue-next';
 
@@ -40,6 +41,7 @@ export default defineComponent({
     const message = ref('');
     const faceDetected = ref(false);
     const modelsLoaded = ref(false);
+    const router = useRouter();
 
     // Load face-api.js models
     const loadFaceModels = async () => {
@@ -108,6 +110,7 @@ export default defineComponent({
         if (response.ok && result.success) {
           faceDetected.value = true;
           message.value = `✅ ${result.message || 'Authentication successful!'}`;
+          router.push('/dashboard');
         } else {
           faceDetected.value = false;
           message.value = `${result.message || 'Face not recognized!'}`;
@@ -131,6 +134,7 @@ export default defineComponent({
 
         await navigator.credentials.get({ publicKey });
         message.value = "✅ Fingerprint authenticated!";
+        router.push('/dashboard');
 
         await fetch('http://127.0.0.1:8000/api/auth/fingerprint', {
           method: 'POST',

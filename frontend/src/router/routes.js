@@ -5,15 +5,15 @@ const loginRules = (to, from, next) => {
   const user_data = JSON.parse(sessionStorage.getItem("user"));
 
   if (!user_data) {
-    if (to.path === '/auth/login') {
+    if (to.path === '/auth/') {
       next();
     } else {
-      next({ path: '/auth/login' });
+      next({ path: '/auth/' });
     }
   } else {
-    if (to.path === '/auth/login') {
+    if (to.path === '/auth/') {
       if (!user_data.role) {
-        next({ path: '/auth/login' });
+        next({ path: '/auth/' });
       } else if (user_data.role === 'course-moderator') {
         next({ path: '/c/' });
       } else {
@@ -41,7 +41,7 @@ const routes = [
     beforeEnter: (to, from, next) => { loginRules(to, from, next) },
     component: () => import('layouts/AuthLayout.vue'),
     children: [
-      { path: '/auth/login', component: () => import('pages/LoginPage.vue') }
+      { path: '/auth/', component: () => import('pages/LoginPage.vue') }
     ]
   },
 
@@ -67,7 +67,10 @@ const routes = [
     path: '/enroll-user',
     component: () => import('pages/BioEnroll.vue')
   },
-
+  {
+    path: '/dashboard',
+    component: () => import('pages/DashboardPage.vue')
+  },
 
   // Always leave this as the last one
   {

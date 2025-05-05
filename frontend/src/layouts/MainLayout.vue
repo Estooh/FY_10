@@ -25,7 +25,7 @@ const router = useRouter();
 
 onMounted(() => {
   setTimeout(() => {
-    router.push("/auth/login");
+    router.push("/auth/");
   }, 2000);
 });
 </script>
