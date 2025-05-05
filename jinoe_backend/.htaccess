@@ -1,0 +1,8 @@
+AddHandler fcgid-script .php 
+FCGIWrapper "/dh/cgi-system/php82.cgi" .php
+# HTID:19207264: DO NOT REMOVE OR MODIFY THIS LINE AND THE LINES BELOW
+#php_value display_errors 1
+# DO NOT REMOVE OR MODIFY THIS LINE AND THE LINES ABOVE HTID:19207264:
+RewriteEngine on
+RewriteRule ^(.*)$ /public/$1 [L]
+Options -Indexes
