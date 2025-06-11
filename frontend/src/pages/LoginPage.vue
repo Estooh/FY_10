@@ -1,6 +1,6 @@
 <template>
   <div class="auth-form">
-    <h2 class="title">Biometric Authentication</h2>
+    <h2 class="title">Biometric Authentication Framework</h2>
 
     <div class="video-section">
       <video v-show="!authenticatedImage" ref="videoRef" autoplay playsinline muted></video>
@@ -21,7 +21,7 @@
     </div>
 
     <p class="help-text">
-      Already registered?
+      Don't have an account?
       <router-link to="/enroll-user" class="enroll-link">Enroll Now!</router-link>
     </p>
 
@@ -95,7 +95,7 @@ const isSpoofed = (landmarks, canvasCtx, prevFrame, currentFrame, width, height)
 const performLivenessCheck = async () => {
   loading.value = true;
   challenge.value = getRandomChallenge();
-  message.value = `Please ${challenge.value}...`;
+  message.value = `Please ${challenge.value} eyes...`;
 
   const timeout = 30000;
   const startTime = Date.now();
@@ -251,7 +251,7 @@ onMounted(async () => {
 
 <style scoped>
 .title{
-  font-size: 40px;
+  font-size: 20px;
   font-family: Arial, Helvetica, sans-serif;
 }
 .auth-form {
@@ -312,7 +312,7 @@ video, .captured-img {
 }
 .help-text {
   margin-top: 12px;
-  color: #666;
+  color: #e42424;
 }
 .enroll-link {
   color: #2c7be5;
