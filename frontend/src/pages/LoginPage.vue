@@ -1,9 +1,14 @@
 <template>
-  <div class="biometric-auth">
+  <div class="auth-form">
     <h2 class="title">Biometric Authentication</h2>
 
-    <div class="video-container">
-      <video ref="videoRef" autoplay playsinline muted></video>
+    <div class="video-section">
+      <video v-show="!authenticatedImage" ref="videoRef" autoplay playsinline muted></video>
+      <img v-show="authenticatedImage" :src="authenticatedImage" alt="Captured" class="captured-img" />
+    </div>
+
+    <div v-if="loading" class="progress-bar">
+      <div class="progress"></div>
     </div>
 
     <div class="buttons">
@@ -17,291 +22,316 @@
 
     <p class="help-text">
       Already registered?
-      <router-link to="/enroll-user" class="admin-link">Enroll Now!</router-link>
+      <router-link to="/enroll-user" class="enroll-link">Enroll Now!</router-link>
     </p>
+
     <p class="message" :class="{ success: faceDetected, error: !faceDetected && message }">{{ message }}</p>
 
     <footer class="footer">&copy; 2025 Final Year Project:10. All rights reserved.</footer>
   </div>
 </template>
 
-<script>
-import { defineComponent, ref, onMounted } from 'vue';
+<script setup>
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { Eye, Fingerprint } from 'lucide-vue-next';
 import * as faceapi from 'face-api.js';
-import { Fingerprint, Eye } from 'lucide-vue-next';
-import HmacSHA256 from 'crypto-js/hmac-sha256';
-import encHex from 'crypto-js/enc-hex';
 
-export default defineComponent({
-  components: { Fingerprint, Eye },
-  setup() {
-    const videoRef = ref(null);
-    const message = ref('');
-    const faceDetected = ref(false);
-    const modelsLoaded = ref(false);
-    const router = useRouter();
-    let blinkCounter = 0;
+const router = useRouter();
+const videoRef = ref(null);
+const loading = ref(false);
+const livenessConfirmed = ref(false);
+const authenticatedImage = ref(null);
+const faceDescriptor = ref(null);
+const message = ref('');
+const challenge = ref('');
+const faceDetected = ref(false);
 
-    const loadFaceModels = async () => {
-      const MODEL_URL = '/models';
-      try {
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-        ]);
-        modelsLoaded.value = true;
-      } catch (error) {
-        console.error("Model loading error:", error);
-        message.value = "❌ Failed to load face recognition models.";
-      }
-    };
+const loadFaceModels = async () => {
+  const MODEL_URL = '/models';
+  await Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+  ]);
+};
 
-    const startVideo = () => {
-      navigator.mediaDevices
-        .getUserMedia({ video: true })
-        .then((stream) => {
-          if (videoRef.value) {
-            videoRef.value.srcObject = stream;
-          }
-        })
-        .catch((err) => {
-          console.error("Webcam error:", err);
-          message.value = "❌ Unable to access webcam.";
-        });
-    };
+const startVideo = () => {
+  navigator.mediaDevices.getUserMedia({ video: true })
+    .then((stream) => {
+      if (videoRef.value) videoRef.value.srcObject = stream;
+    })
+    .catch((err) => console.error('Webcam access error:', err));
+};
 
-    const generateNonce = () => crypto.getRandomValues(new Uint8Array(16)).join('');
+const getRandomChallenge = () => {
+  const challenges = ['blink', 'turn left', 'turn right'];
+  return challenges[Math.floor(Math.random() * challenges.length)];
+};
 
-    const signPayload = (payload) => {
-      const secretKey = import.meta.env.VITE_SIGNATURE_SECRET;
-      return HmacSHA256(JSON.stringify(payload), secretKey).toString(encHex);
-    };
+const detectSharpChanges = (prevFrame, currentFrame, width, height) => {
+  let diffPixels = 0;
+  const threshold = 50;
+  for (let i = 0; i < prevFrame.data.length; i += 4) {
+    const diff = Math.abs(prevFrame.data[i] - currentFrame.data[i]) +
+                 Math.abs(prevFrame.data[i + 1] - currentFrame.data[i + 1]) +
+                 Math.abs(prevFrame.data[i + 2] - currentFrame.data[i + 2]);
+    if (diff > threshold) diffPixels++;
+  }
+  return diffPixels > (width * height * 0.05);
+};
 
-    const getEAR = (landmarks) => {
-      const left = landmarks.getLeftEye();
-      const right = landmarks.getRightEye();
+const isSpoofed = (landmarks, canvasCtx, prevFrame, currentFrame, width, height) => {
+  const glarePoints = landmarks.getLeftEye().concat(landmarks.getRightEye());
+  let totalBrightness = 0;
+  glarePoints.forEach(p => {
+    const pixel = canvasCtx.getImageData(p.x, p.y, 1, 1).data;
+    totalBrightness += (pixel[0] + pixel[1] + pixel[2]) / 3;
+  });
+  const avgBrightness = totalBrightness / glarePoints.length;
+  return avgBrightness > 240 || detectSharpChanges(prevFrame, currentFrame, width, height);
+};
 
-      const calc = (eye) => {
-        const A = faceapi.euclideanDistance(eye[1], eye[5]);
-        const B = faceapi.euclideanDistance(eye[2], eye[4]);
-        const C = faceapi.euclideanDistance(eye[0], eye[3]);
-        return (A + B) / (2.0 * C);
-      };
+const performLivenessCheck = async () => {
+  loading.value = true;
+  challenge.value = getRandomChallenge();
+  message.value = `Please ${challenge.value}...`;
 
-      return (calc(left) + calc(right)) / 2.0;
-    };
+  const timeout = 30000;
+  const startTime = Date.now();
+  let blinked = false;
+  let turned = false;
+  let prevFrame = null;
 
-    const checkLiveness = async () => {
-      let detected = false;
-      const options = new faceapi.TinyFaceDetectorOptions();
+  const checkLoop = async () => {
+    if (Date.now() - startTime > timeout) {
+      message.value = '❌ Liveness check failed.';
+      loading.value = false;
+      return;
+    }
 
-      for (let i = 0; i < 30; i++) {
-        const result = await faceapi
-          .detectSingleFace(videoRef.value, options)
-          .withFaceLandmarks();
+    const detections = await faceapi
+      .detectAllFaces(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+      .withFaceLandmarks();
 
-        if (result) {
-          const ear = getEAR(result.landmarks);
-          if (ear < 0.2) {
-            blinkCounter++;
-          }
+    if (detections.length === 0) {
+      requestAnimationFrame(checkLoop);
+      return;
+    }
 
-          if (blinkCounter >= 2) {
-            detected = true;
-            break;
-          }
-        }
-        await new Promise((r) => setTimeout(r, 200));
-      }
+    if (detections.length > 1) {
+      message.value = '❌ Multiple faces detected. Only one face allowed.';
+      loading.value = false;
+      return;
+    }
 
-      return detected;
-    };
+    const detection = detections[0];
+    const { landmarks } = detection;
+    const nose = landmarks.getNose();
+    const leftEye = landmarks.getLeftEye();
+    const rightEye = landmarks.getRightEye();
 
-    const handleLivenessThenDetect = async () => {
-      message.value = "🔎 Please blink to verify liveness...";
-      blinkCounter = 0;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.value.videoWidth;
+    canvas.height = videoRef.value.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(videoRef.value, 0, 0);
+    const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-      const isLive = await checkLiveness();
-      if (!isLive) {
-        message.value = "❌ Liveness check failed. Please try again.";
-        return;
-      }
-      message.value = "✅ Liveness confirmed. Authenticating...";
-      setTimeout(() => detectFace(), 1000);
-    };
+    if (prevFrame && isSpoofed(landmarks, ctx, prevFrame, currentFrame, canvas.width, canvas.height)) {
+      message.value = '❌ Spoofing detected!';
+      loading.value = false;
+      return;
+    }
 
-    const detectFace = async () => {
-      const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+    prevFrame = currentFrame;
 
-      const detections = await faceapi
-        .detectAllFaces(videoRef.value, options)
-        .withFaceLandmarks()
-        .withFaceDescriptors();
+    const ear = (eye) => Math.abs(eye[1].y - eye[5].y) / Math.abs(eye[0].x - eye[3].x);
+    const avgEAR = (ear(leftEye) + ear(rightEye)) / 2;
+    if (avgEAR < 0.23) blinked = true;
 
-      if (detections.length === 0) {
-        faceDetected.value = false;
-        message.value = "❌ No face detected!";
-        return;
-      }
+    const noseX = nose[3].x;
+    if (noseX < canvas.width * 0.4 || noseX > canvas.width * 0.6) turned = true;
 
-      const descriptor = Array.from(detections[0].descriptor);
-      const timestamp = new Date().toISOString();
-      const nonce = generateNonce();
-      const payload = { descriptor, timestamp, nonce };
-      const signature = signPayload(payload);
+    const passed =
+      (challenge.value === 'blink' && blinked) ||
+      (challenge.value === 'turn right' && noseX < canvas.width * 0.4) ||
+      (challenge.value === 'turn left' && noseX > canvas.width * 0.6);
 
-      try {
-        const response = await fetch('http://127.0.0.1:8000/api/auth/face', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Signature': signature,
-          },
-          body: JSON.stringify(payload),
-        });
+    if (passed) {
+      livenessConfirmed.value = true;
+      message.value = '✅ Liveness passed!';
+      loading.value = false;
+    } else {
+      requestAnimationFrame(checkLoop);
+    }
+  };
 
-        const result = await response.json();
+  requestAnimationFrame(checkLoop);
+};
 
-        if (response.ok && result.success) {
-          faceDetected.value = true;
-          message.value = `✅ ${result.message || 'Authentication successful!'}`;
-          router.push('/dashboard');
-        } else {
-          faceDetected.value = false;
-          message.value = `${result.message || 'Face not recognized!'}`;
-        }
-      } catch (error) {
-        faceDetected.value = false;
-        console.error("Auth error:", error);
-        message.value = "❌ Server error during authentication.";
-      }
-    };
+const authenticateFace = async () => {
+  loading.value = true;
 
-    const authenticateFingerprint = async () => {
-      try {
-        const challenge = new Uint8Array(32);
-        const publicKey = {
-          challenge,
-          timeout: 60000,
-          allowCredentials: [{ type: 'public-key', id: new Uint8Array(16), transports: ['internal'] }],
-          userVerification: 'preferred',
-        };
+  try {
+    const detections = await faceapi
+      .detectAllFaces(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+      .withFaceLandmarks()
+      .withFaceDescriptors();
 
-        await navigator.credentials.get({ publicKey });
+    if (detections.length === 0) {
+      message.value = '❌ No face detected.';
+      return;
+    }
 
-        const timestamp = new Date().toISOString();
-        const nonce = generateNonce();
-        const payload = { userAgent: navigator.userAgent, timestamp, nonce };
-        const signature = signPayload(payload);
+    if (detections.length > 1) {
+      message.value = '❌ Multiple faces detected. Only one face allowed.';
+      return;
+    }
 
-        message.value = "✅ Fingerprint authenticated!";
-        router.push('/dashboard');
+    const detection = detections[0];
+    faceDescriptor.value = Array.from(detection.descriptor);
 
-        await fetch('http://127.0.0.1:8000/api/auth/fingerprint', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Signature': signature },
-          body: JSON.stringify(payload),
-        });
-      } catch (error) {
-        console.error("Fingerprint error:", error);
-        message.value = "❌ Fingerprint authentication failed!";
-      }
-    };
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.value.videoWidth;
+    canvas.height = videoRef.value.videoHeight;
+    canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
+    const imageData = canvas.toDataURL('image/jpeg');
+    authenticatedImage.value = imageData;
 
-    onMounted(async () => {
-      await loadFaceModels();
-      startVideo();
+    const res = await fetch('http://127.0.0.1:8000/api/auth/face', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ descriptor: faceDescriptor.value }),
     });
 
-    return {
-      videoRef,
-      message,
-      detectFace,
-      handleLivenessThenDetect,
-      authenticateFingerprint,
-      faceDetected,
-    };
-  },
+    if (res.ok) {
+      faceDetected.value = true;
+      message.value = '✅ Face authenticated. Redirecting...';
+      setTimeout(() => router.push('/dashboard'), 1500);
+    } else {
+      faceDetected.value = false;
+      message.value = '❌ Face not recognized.';
+    }
+  } catch (e) {
+    console.error('Error:', e);
+    message.value = '❌ Authentication error.';
+  } finally {
+    loading.value = false;
+  }
+};
+
+const handleLivenessThenDetect = async () => {
+  if (!livenessConfirmed.value) {
+    await performLivenessCheck();
+  } else {
+    await authenticateFace();
+  }
+};
+
+const authenticateFingerprint = async () => {
+  try {
+    const cred = await navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32) } });
+    if (cred) {
+      message.value = '✅ Fingerprint authenticated. Redirecting...';
+      setTimeout(() => router.push('/dashboard'), 1500);
+    } else {
+      message.value = '❌ Fingerprint not verified.';
+    }
+  } catch {
+    message.value = '❌ Fingerprint authentication failed.';
+  }
+};
+
+onMounted(async () => {
+  await loadFaceModels();
+  startVideo();
 });
 </script>
 
 <style scoped>
-.biometric-auth {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 30px;
-  font-family: Arial, sans-serif;
+.title{
+  font-size: 40px;
+  font-family: Arial, Helvetica, sans-serif;
+}
+.auth-form {
+  max-width: 460px;
+  margin: auto;
   text-align: center;
+  padding: 30px;
 }
-.title {
-  font-size: 1.8rem;
-  margin-bottom: 15px;
-  color: #333;
-}
-.video-container {
-  border: 2px solid #ccc;
-  border-radius: 10px;
+.video-section {
+  margin: 20px auto;
+  width: 180px;
+  height: 180px;
+  border-radius: 8px;
   overflow: hidden;
-  width: 150px;
-  height: 150px;
-  margin-bottom: 20px;
+  border: 2px solid #ccc;
 }
-video {
+video, .captured-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background-color: #eee;
+  margin-top: 12px;
+}
+.progress {
+  width: 100%;
+  height: 100%;
+  background-color: #2c7be5;
+  animation: loadingAnim 2s linear infinite;
+}
+@keyframes loadingAnim {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
 .buttons {
   display: flex;
-  gap: 12px;
-  margin-bottom: 10px;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
 }
 .auth-btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  background-color: #007bff;
-  color: #fff;
+  background-color: #2c7be5;
+  color: white;
+  padding: 10px 16px;
   border: none;
-  padding: 10px 15px;
   border-radius: 6px;
+  font-weight: bold;
   cursor: pointer;
-  transition: background-color 0.3s ease;
 }
 .auth-btn:hover {
-  background-color: #0056b3;
+  background-color: #1a5cbf;
 }
 .help-text {
-  font-size: 0.95rem;
-  color: #446ad4;
-  margin-top: 10px;
+  margin-top: 12px;
+  color: #666;
+}
+.enroll-link {
+  color: #2c7be5;
+  text-decoration: none;
 }
 .message {
-  margin-top: 12px;
+  margin-top: 10px;
   font-weight: bold;
-  font-size: 1rem;
 }
-.success {
+.message.success {
   color: green;
 }
-.error {
+.message.error {
   color: red;
 }
 .footer {
-  margin-top: 30px;
-  font-size: 0.85rem;
-  color: #888;
+  margin-top: 50px;
+  font-size: 13px;
+  color: #aaa;
 }
-.admin-link {
-  color: #e63946;
-  text-decoration: none;
-  cursor: pointer;
-  margin-left: 5px;
-}
-.admin-link:hover {
-  color: #a61d2d;
-}
+
 </style>

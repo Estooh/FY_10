@@ -31,6 +31,9 @@
       <p class="info-text">{{ message }}</p>
       <button type="submit" class="submit-btn" :disabled="loading">Enroll User</button>
     </form>
+
+    <footer class="footer">&copy; 2025 Final Year Project:10. All rights reserved.</footer>
+
   </div>
 </template>
 
@@ -319,6 +322,10 @@ onMounted(async () => {
 
 
 <style scoped>
+.title{
+  font-size: 40px;
+  font-family: Arial, Helvetica, sans-serif;
+}
 .enrollment-form {
   max-width: 420px;
   margin: auto;
@@ -326,9 +333,11 @@ onMounted(async () => {
   text-align: center;
 }
 .input {
-  width: 100%;
+  width: 80%;
   padding: 10px;
   margin-bottom: 15px;
+  color: #000;
+  border-color: #2c7be5;
 }
 .video-section {
   margin: 20px 0;
@@ -385,4 +394,20 @@ video, .captured-img {
   margin-top: 10px;
   color: #555;
 }
+.message {
+  margin-top: 10px;
+  font-weight: bold;
+}
+.message.success {
+  color: green;
+}
+.message.error {
+  color: red;
+}
+.footer {
+  margin-top: 50px;
+  font-size: 13px;
+  color: #aaa;
+}
+
 </style>
