@@ -7,7 +7,7 @@
     </div>
 
     <div class="buttons">
-      <button @click="detectFace" class="auth-btn">
+      <button @click="handleLivenessThenDetect" class="auth-btn">
         <Eye size="20" /> Authenticate Face
       </button>
       <button @click="authenticateFingerprint" class="auth-btn">
@@ -30,20 +30,19 @@ import { defineComponent, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import * as faceapi from 'face-api.js';
 import { Fingerprint, Eye } from 'lucide-vue-next';
+import HmacSHA256 from 'crypto-js/hmac-sha256';
+import encHex from 'crypto-js/enc-hex';
 
 export default defineComponent({
-  components: {
-    Fingerprint,
-    Eye,
-  },
+  components: { Fingerprint, Eye },
   setup() {
     const videoRef = ref(null);
     const message = ref('');
     const faceDetected = ref(false);
     const modelsLoaded = ref(false);
     const router = useRouter();
+    let blinkCounter = 0;
 
-    // Load face-api.js models
     const loadFaceModels = async () => {
       const MODEL_URL = '/models';
       try {
@@ -53,14 +52,12 @@ export default defineComponent({
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
         ]);
         modelsLoaded.value = true;
-        console.log("Face models loaded successfully.");
       } catch (error) {
-        console.error("Error loading face-api models:", error);
+        console.error("Model loading error:", error);
         message.value = "❌ Failed to load face recognition models.";
       }
     };
 
-    // Start webcam stream
     const startVideo = () => {
       navigator.mediaDevices
         .getUserMedia({ video: true })
@@ -75,13 +72,67 @@ export default defineComponent({
         });
     };
 
-    // Detect face and authenticate
-    const detectFace = async () => {
-      if (!modelsLoaded.value) {
-        message.value = "⏳ Loading models, please wait...";
-        return;
+    const generateNonce = () => crypto.getRandomValues(new Uint8Array(16)).join('');
+
+    const signPayload = (payload) => {
+      const secretKey = import.meta.env.VITE_SIGNATURE_SECRET;
+      return HmacSHA256(JSON.stringify(payload), secretKey).toString(encHex);
+    };
+
+    const getEAR = (landmarks) => {
+      const left = landmarks.getLeftEye();
+      const right = landmarks.getRightEye();
+
+      const calc = (eye) => {
+        const A = faceapi.euclideanDistance(eye[1], eye[5]);
+        const B = faceapi.euclideanDistance(eye[2], eye[4]);
+        const C = faceapi.euclideanDistance(eye[0], eye[3]);
+        return (A + B) / (2.0 * C);
+      };
+
+      return (calc(left) + calc(right)) / 2.0;
+    };
+
+    const checkLiveness = async () => {
+      let detected = false;
+      const options = new faceapi.TinyFaceDetectorOptions();
+
+      for (let i = 0; i < 30; i++) {
+        const result = await faceapi
+          .detectSingleFace(videoRef.value, options)
+          .withFaceLandmarks();
+
+        if (result) {
+          const ear = getEAR(result.landmarks);
+          if (ear < 0.2) {
+            blinkCounter++;
+          }
+
+          if (blinkCounter >= 2) {
+            detected = true;
+            break;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 200));
       }
 
+      return detected;
+    };
+
+    const handleLivenessThenDetect = async () => {
+      message.value = "🔎 Please blink to verify liveness...";
+      blinkCounter = 0;
+
+      const isLive = await checkLiveness();
+      if (!isLive) {
+        message.value = "❌ Liveness check failed. Please try again.";
+        return;
+      }
+      message.value = "✅ Liveness confirmed. Authenticating...";
+      setTimeout(() => detectFace(), 1000);
+    };
+
+    const detectFace = async () => {
       const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
 
       const detections = await faceapi
@@ -96,13 +147,19 @@ export default defineComponent({
       }
 
       const descriptor = Array.from(detections[0].descriptor);
-      message.value = "⏳ Authenticating...";
+      const timestamp = new Date().toISOString();
+      const nonce = generateNonce();
+      const payload = { descriptor, timestamp, nonce };
+      const signature = signPayload(payload);
 
       try {
         const response = await fetch('http://127.0.0.1:8000/api/auth/face', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ descriptor }),
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Signature': signature,
+          },
+          body: JSON.stringify(payload),
         });
 
         const result = await response.json();
@@ -117,35 +174,38 @@ export default defineComponent({
         }
       } catch (error) {
         faceDetected.value = false;
-        console.error("Authentication error:", error);
+        console.error("Auth error:", error);
         message.value = "❌ Server error during authentication.";
       }
     };
 
-    // Simulated fingerprint authentication
     const authenticateFingerprint = async () => {
       try {
+        const challenge = new Uint8Array(32);
         const publicKey = {
-          challenge: new Uint8Array(32),
+          challenge,
           timeout: 60000,
-          allowCredentials: [{ type: "public-key", id: new Uint8Array(16), transports: ["internal"] }],
-          userVerification: "preferred",
+          allowCredentials: [{ type: 'public-key', id: new Uint8Array(16), transports: ['internal'] }],
+          userVerification: 'preferred',
         };
 
         await navigator.credentials.get({ publicKey });
+
+        const timestamp = new Date().toISOString();
+        const nonce = generateNonce();
+        const payload = { userAgent: navigator.userAgent, timestamp, nonce };
+        const signature = signPayload(payload);
+
         message.value = "✅ Fingerprint authenticated!";
         router.push('/dashboard');
 
         await fetch('http://127.0.0.1:8000/api/auth/fingerprint', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userAgent: navigator.userAgent,
-            timestamp: new Date().toISOString(),
-          }),
+          headers: { 'Content-Type': 'application/json', 'X-Signature': signature },
+          body: JSON.stringify(payload),
         });
       } catch (error) {
-        console.error("Fingerprint auth failed:", error);
+        console.error("Fingerprint error:", error);
         message.value = "❌ Fingerprint authentication failed!";
       }
     };
@@ -159,6 +219,7 @@ export default defineComponent({
       videoRef,
       message,
       detectFace,
+      handleLivenessThenDetect,
       authenticateFingerprint,
       faceDetected,
     };
@@ -175,34 +236,29 @@ export default defineComponent({
   font-family: Arial, sans-serif;
   text-align: center;
 }
-
 .title {
   font-size: 1.8rem;
   margin-bottom: 15px;
   color: #333;
 }
-
 .video-container {
   border: 2px solid #ccc;
   border-radius: 10px;
   overflow: hidden;
-  width: 180px;
-  height: 140px;
+  width: 150px;
+  height: 150px;
   margin-bottom: 20px;
 }
-
 video {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-
 .buttons {
   display: flex;
   gap: 12px;
   margin-bottom: 10px;
 }
-
 .auth-btn {
   display: flex;
   align-items: center;
@@ -215,44 +271,36 @@ video {
   cursor: pointer;
   transition: background-color 0.3s ease;
 }
-
 .auth-btn:hover {
   background-color: #0056b3;
 }
-
 .help-text {
   font-size: 0.95rem;
   color: #446ad4;
   margin-top: 10px;
 }
-
 .message {
   margin-top: 12px;
   font-weight: bold;
   font-size: 1rem;
 }
-
 .success {
   color: green;
 }
-
 .error {
   color: red;
 }
-
 .footer {
   margin-top: 30px;
   font-size: 0.85rem;
   color: #888;
 }
-
 .admin-link {
   color: #e63946;
   text-decoration: none;
   cursor: pointer;
   margin-left: 5px;
 }
-
 .admin-link:hover {
   color: #a61d2d;
 }

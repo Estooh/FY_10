@@ -6,7 +6,6 @@
       <input type="text" v-model="fullName" placeholder="Full Name" required class="input" />
       <input type="email" v-model="email" placeholder="Email Address" required class="input" />
 
-      <!-- Biometric Choice -->
       <div class="input">
         <label><input type="radio" value="face" v-model="biometricChoice" /> Use Face</label>
         <label style="margin-left: 20px;"><input type="radio" value="fingerprint" v-model="biometricChoice" /> Use Fingerprint</label>
@@ -14,22 +13,23 @@
 
       <center>
         <div class="video-section">
-          <video ref="videoRef" autoplay playsinline muted></video>
+          <video v-show="!capturedImage" ref="videoRef" autoplay playsinline muted></video>
+          <img v-show="capturedImage" :src="capturedImage" alt="Captured" class="captured-img" />
         </div>
       </center>
 
+      <div v-if="loading" class="progress-bar">
+        <div class="progress"></div>
+      </div>
+
       <div class="buttons">
-        <button type="button" @click="captureFace" :disabled="biometricChoice !== 'face'" class="capture-btn">
-          Capture Face
-        </button>
-        <button type="button" @click="captureFingerprint" :disabled="biometricChoice !== 'fingerprint'" class="capture-btn">
-          Capture Fingerprint
+        <button type="button" @click="handleBiometricAction" :disabled="!biometricChoice || loading" class="capture-btn">
+          {{ biometricChoice === 'face' ? (livenessConfirmed ? 'Capture Face' : 'Start Liveness Check') : 'Capture Fingerprint' }}
         </button>
       </div>
 
       <p class="info-text">{{ message }}</p>
-
-      <button type="submit" class="submit-btn">Enroll User</button>
+      <button type="submit" class="submit-btn" :disabled="loading">Enroll User</button>
     </form>
   </div>
 </template>
@@ -40,16 +40,19 @@ import { useRouter } from 'vue-router';
 import * as faceapi from 'face-api.js';
 
 const router = useRouter();
-
 const videoRef = ref(null);
 const fullName = ref('');
 const email = ref('');
-const biometricChoice = ref('face'); // 'face' or 'fingerprint'
+const biometricChoice = ref('face');
 const faceDescriptor = ref(null);
 const faceImage = ref(null);
 const fingerprintCredential = ref(null);
 const fingerprintTemplate = ref(null);
 const message = ref('');
+const livenessConfirmed = ref(false);
+const loading = ref(false);
+const capturedImage = ref(null);
+const challenge = ref('');
 
 const loadFaceModels = async () => {
   const MODEL_URL = '/models';
@@ -63,36 +66,143 @@ const loadFaceModels = async () => {
 const startVideo = () => {
   navigator.mediaDevices.getUserMedia({ video: true })
     .then((stream) => {
-      if (videoRef.value) {
-        videoRef.value.srcObject = stream;
-      }
+      if (videoRef.value) videoRef.value.srcObject = stream;
     })
-    .catch((err) => console.error('Webcam error:', err));
+    .catch((err) => console.error('❌ Cannot access webcam!', err));
 };
 
-const captureFace = async () => {
-  const options = new faceapi.TinyFaceDetectorOptions();
-  const detections = await faceapi
-    .detectAllFaces(videoRef.value, options)
-    .withFaceLandmarks()
-    .withFaceDescriptors();
+const getRandomChallenge = () => {
+  const challenges = ['turn left', 'turn right', 'blink'];
+  return challenges[Math.floor(Math.random() * challenges.length)];
+};
 
-  if (detections.length > 0) {
-    faceDescriptor.value = Array.from(detections[0].descriptor);
+const detectSharpChanges = (prevFrame, currentFrame, width, height) => {
+  const threshold = 50;
+  let diffPixels = 0;
+  for (let i = 0; i < prevFrame.data.length; i += 4) {
+    const diff = Math.abs(prevFrame.data[i] - currentFrame.data[i]) +
+                 Math.abs(prevFrame.data[i + 1] - currentFrame.data[i + 1]) +
+                 Math.abs(prevFrame.data[i + 2] - currentFrame.data[i + 2]);
+    if (diff > threshold) diffPixels++;
+  }
+  return diffPixels > (width * height * 0.05);
+};
 
+const isSpoofed = (landmarks, canvasCtx, prevFrame, currentFrame, width, height) => {
+  const glareRegion = landmarks.getLeftEye().concat(landmarks.getRightEye());
+  let totalBrightness = 0;
+
+  glareRegion.forEach(point => {
+    const x = Math.floor(point.x);
+    const y = Math.floor(point.y);
+    const pixel = canvasCtx.getImageData(x, y, 1, 1).data;
+    const brightness = (pixel[0] + pixel[1] + pixel[2]) / 3;
+    totalBrightness += brightness;
+  });
+
+  const avgBrightness = totalBrightness / glareRegion.length;
+  const screenGlareDetected = avgBrightness > 240;
+
+  const sharpChangeDetected = detectSharpChanges(prevFrame, currentFrame, width, height);
+
+  return screenGlareDetected || sharpChangeDetected;
+};
+
+const startLivenessCheck = async () => {
+  loading.value = true;
+  challenge.value = getRandomChallenge();
+  message.value = `👁️ Please ${challenge.value}...`;
+
+  const timeout = 15000;
+  const startTime = Date.now();
+  let blinked = false;
+  let turned = false;
+  let prevFrame = null;
+
+  const detectActions = async () => {
+    const elapsed = Date.now() - startTime;
+    if (elapsed > timeout) {
+      message.value = "❌ Liveness check failed. Try again.";
+      loading.value = false;
+      return;
+    }
+
+    const detections = await faceapi
+      .detectSingleFace(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+      .withFaceLandmarks();
+
+    if (!detections) {
+      requestAnimationFrame(detectActions);
+      return;
+    }
+
+    const landmarks = detections.landmarks;
+    const leftEye = landmarks.getLeftEye();
+    const rightEye = landmarks.getRightEye();
+    const nose = landmarks.getNose();
     const canvas = document.createElement('canvas');
     canvas.width = videoRef.value.videoWidth;
     canvas.height = videoRef.value.videoHeight;
-    canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
-    faceImage.value = canvas.toDataURL('image/jpeg');
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(videoRef.value, 0, 0);
+    const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    message.value = "✅ Face captured successfully.";
-  } else {
-    message.value = "❌ No face detected. Try again.";
+    if (prevFrame && isSpoofed(landmarks, ctx, prevFrame, currentFrame, canvas.width, canvas.height)) {
+      message.value = "❌ Spoofing attempt detected (glare or abnormal frame change).";
+      loading.value = false;
+      return;
+    }
+    prevFrame = currentFrame;
+
+    const eyeOpenRatio = (eye) => Math.abs(eye[1].y - eye[5].y) / Math.abs(eye[0].x - eye[3].x);
+    const leftRatio = eyeOpenRatio(leftEye);
+    const rightRatio = eyeOpenRatio(rightEye);
+    const avgEAR = (leftRatio + rightRatio) / 2;
+    const CLOSED_THRESHOLD = 0.23;
+    if (avgEAR < CLOSED_THRESHOLD) blinked = true;
+
+    const noseX = nose[3].x;
+    if (noseX < videoRef.value.videoWidth * 0.4 || noseX > videoRef.value.videoWidth * 0.6) turned = true;
+
+    if ((challenge.value === 'blink' && blinked) ||
+        (challenge.value === 'turn right' && noseX < videoRef.value.videoWidth * 0.4) ||
+        (challenge.value === 'turn left' && noseX > videoRef.value.videoWidth * 0.6)) {
+      livenessConfirmed.value = true;
+      message.value = "✅ Liveness confirmed. Now capture face.";
+      loading.value = false;
+      return;
+    }
+
+    requestAnimationFrame(detectActions);
+  };
+
+  detectActions();
+};
+
+const captureFace = async () => {
+  const detections = await faceapi
+    .detectSingleFace(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+    .withFaceLandmarks()
+    .withFaceDescriptor();
+
+  if (!detections) {
+    message.value = "❌ Only one face must be visible.";
+    return;
   }
+
+  faceDescriptor.value = Array.from(detections.descriptor);
+  const canvas = document.createElement('canvas');
+  canvas.width = videoRef.value.videoWidth;
+  canvas.height = videoRef.value.videoHeight;
+  canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
+  const imageData = canvas.toDataURL('image/jpeg');
+  faceImage.value = imageData;
+  capturedImage.value = imageData;
+  message.value = "✅ Face captured successfully.";
 };
 
 const captureFingerprint = async () => {
+  loading.value = true;
   try {
     const publicKey = {
       challenge: new Uint8Array(32),
@@ -107,24 +217,39 @@ const captureFingerprint = async () => {
         authenticatorAttachment: "platform",
         userVerification: "preferred",
       },
-      timeout: 60000,
-      attestation: "none"
+      timeout: 10000,
+      attestation: "none",
     };
 
     const credential = await navigator.credentials.create({ publicKey });
     fingerprintCredential.value = credential.id;
 
-    // Snapshot from video for visual-only template
     const canvas = document.createElement('canvas');
     canvas.width = videoRef.value.videoWidth;
     canvas.height = videoRef.value.videoHeight;
     canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
-    fingerprintTemplate.value = canvas.toDataURL('image/jpeg');
+    const imageData = canvas.toDataURL('image/jpeg');
+    fingerprintTemplate.value = imageData;
+    capturedImage.value = imageData;
 
     message.value = "✅ Fingerprint captured using WebAuthn.";
   } catch (error) {
     console.error('Fingerprint error:', error);
     message.value = "❌ Fingerprint capture failed.";
+  } finally {
+    loading.value = false;
+  }
+};
+
+const handleBiometricAction = async () => {
+  if (biometricChoice.value === 'face') {
+    if (!livenessConfirmed.value) {
+      await startLivenessCheck();
+    } else {
+      await captureFace();
+    }
+  } else {
+    await captureFingerprint();
   }
 };
 
@@ -134,21 +259,17 @@ const submitEnrollment = async () => {
     return;
   }
 
-  if (biometricChoice.value === 'face') {
-    if (!faceDescriptor.value || !faceImage.value) {
-      message.value = "❗ Please capture a face image.";
-      return;
-    }
-  } else if (biometricChoice.value === 'fingerprint') {
-    if (!fingerprintCredential.value || !fingerprintTemplate.value) {
-      message.value = "❗ Please capture a fingerprint.";
-      return;
-    }
-  } else {
-    message.value = "❗ Invalid biometric choice.";
+  if (biometricChoice.value === 'face' && (!faceDescriptor.value || !faceImage.value)) {
+    message.value = "❗ Please capture a face image.";
     return;
   }
 
+  if (biometricChoice.value === 'fingerprint' && (!fingerprintCredential.value || !fingerprintTemplate.value)) {
+    message.value = "❗ Please capture a fingerprint.";
+    return;
+  }
+
+  loading.value = true;
   const payload = {
     full_name: fullName.value,
     email: email.value,
@@ -167,25 +288,26 @@ const submitEnrollment = async () => {
     });
 
     if (response.ok) {
-      message.value = "🎉 User enrolled successfully! Redirecting to authentication page...";
-      // Clear form fields
-      fullName.value = '';
-      email.value = '';
-      faceDescriptor.value = null;
-      faceImage.value = null;
-      fingerprintCredential.value = null;
-      fingerprintTemplate.value = null;
-
-      // Delay navigation to authentication page
+      message.value = "🎉 User enrolled successfully! Redirecting...";
       setTimeout(() => {
+        fullName.value = '';
+        email.value = '';
+        faceDescriptor.value = null;
+        faceImage.value = null;
+        fingerprintCredential.value = null;
+        fingerprintTemplate.value = null;
+        livenessConfirmed.value = false;
+        capturedImage.value = null;
         router.push('/auth/');
-      }, 3000); // 3-second delay
+      }, 1500);
     } else {
       message.value = "❌ Enrollment failed. Try again.";
     }
   } catch (error) {
     console.error('Submit error:', error);
     message.value = "❌ Enrollment failed.";
+  } finally {
+    loading.value = false;
   }
 };
 
@@ -195,14 +317,11 @@ onMounted(async () => {
 });
 </script>
 
+
 <style scoped>
-h2 {
-  font-size: large;
-  font-style: bold;
-}
 .enrollment-form {
-  max-width: 400px;
-  margin: 0 auto;
+  max-width: 420px;
+  margin: auto;
   padding: 30px;
   text-align: center;
 }
@@ -215,21 +334,36 @@ h2 {
   margin: 20px 0;
   border: 2px solid #ccc;
   border-radius: 8px;
-  overflow: hidden;
   height: 150px;
   width: 150px;
-  justify-content: center;
 }
-video {
+video, .captured-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background-color: #eee;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.progress {
+  width: 100%;
+  height: 100%;
+  background-color: #2c7be5;
+  animation: progressAnim 1.5s linear infinite;
+}
+@keyframes progressAnim {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 .capture-btn {
   margin: 10px;
   padding: 10px 20px;
   background-color: #2c7be5;
-  color: #fff;
+  color: white;
   border: none;
   border-radius: 5px;
 }

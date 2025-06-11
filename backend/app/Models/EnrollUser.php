@@ -23,6 +23,5 @@ class EnrollUser extends Model
 
     protected $casts = [
         'face_descriptor' => 'array',
-        // 'full_name' => 'string',
     ];
 }

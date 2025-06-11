@@ -9,7 +9,7 @@
           <q-img src="~assets/conture-logo.png" style="width: 80px; height: auto" />
         </p>
         <p class="text-primary text-h5 text-center" style="letter-spacing: 5px">
-          CONTURE
+          BIO AUTH
           <br>
           Jinoe
         </p>
