@@ -16,6 +16,7 @@
     "@google-pay/button-element": "^3.1.0",
     "@quasar/extras": "^1.16.4",
     "axios": "^1.2.1",
+    "bcryptjs": "^3.0.2",
     "crypto-js": "^4.2.0",
     "face-api.js": "^0.22.2",
     "lucide-vue-next": "^0.503.0",

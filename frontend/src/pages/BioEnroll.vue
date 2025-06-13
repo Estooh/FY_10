@@ -3,37 +3,44 @@
     <h2 class="title">Enroll New User</h2>
 
     <form @submit.prevent="submitEnrollment">
-      <input type="text" v-model="fullName" placeholder="Full Name" required class="input" />
-      <input type="email" v-model="email" placeholder="Email Address" required class="input" />
+      <input v-model="fullName" type="text" placeholder="Full Name" required class="input" />
+      <input v-model="email" type="email" placeholder="Email Address" required class="input" />
 
-      <div class="input">
+      <center>
+        <div class="input" style="text-align: center;">
         <label><input type="radio" value="face" v-model="biometricChoice" /> Use Face</label>
         <label style="margin-left: 20px;"><input type="radio" value="fingerprint" v-model="biometricChoice" /> Use Fingerprint</label>
       </div>
-
-      <center>
-        <div class="video-section">
-          <video v-show="!capturedImage" ref="videoRef" autoplay playsinline muted></video>
-          <img v-show="capturedImage" :src="capturedImage" alt="Captured" class="captured-img" />
-        </div>
       </center>
+
+      <div class="video-section" v-if="biometricChoice === 'face'" style="text-align: center;">
+        <video v-show="!capturedImage" ref="videoRef" autoplay playsinline muted></video>
+        <img v-show="capturedImage" :src="capturedImage" alt="Captured" class="captured-img" />
+      </div>
 
       <div v-if="loading" class="progress-bar">
         <div class="progress"></div>
       </div>
 
       <div class="buttons">
-        <button type="button" @click="handleBiometricAction" :disabled="!biometricChoice || loading" class="capture-btn">
-          {{ biometricChoice === 'face' ? (livenessConfirmed ? 'Capture Face' : 'Start Liveness Check') : 'Capture Fingerprint' }}
+        <button
+          type="button"
+          class="capture-btn"
+          @click="handleBiometricAction"
+          :disabled="!biometricChoice || loading"
+        >
+          {{ biometricChoice === 'face'
+              ? (livenessConfirmed ? '📸 Capture Face' : 'Start Liveness Check')
+              : 'Capture Fingerprint'
+          }}
         </button>
       </div>
 
-      <p class="info-text">{{ message }}</p>
+      <p :class="['info-text', messageColor]">{{ message }}</p>
       <button type="submit" class="submit-btn" :disabled="loading">Enroll User</button>
     </form>
 
     <footer class="footer">&copy; 2025 Final Year Project:10. All rights reserved.</footer>
-
   </div>
 </template>
 
@@ -43,6 +50,8 @@ import { useRouter } from 'vue-router';
 import * as faceapi from 'face-api.js';
 
 const router = useRouter();
+
+// Refs and State
 const videoRef = ref(null);
 const fullName = ref('');
 const email = ref('');
@@ -52,11 +61,13 @@ const faceImage = ref(null);
 const fingerprintCredential = ref(null);
 const fingerprintTemplate = ref(null);
 const message = ref('');
+const messageColor = ref('');
 const livenessConfirmed = ref(false);
 const loading = ref(false);
 const capturedImage = ref(null);
 const challenge = ref('');
 
+// Load models
 const loadFaceModels = async () => {
   const MODEL_URL = '/models';
   await Promise.all([
@@ -66,144 +77,138 @@ const loadFaceModels = async () => {
   ]);
 };
 
+// Start webcam
 const startVideo = () => {
-  navigator.mediaDevices.getUserMedia({ video: true })
-    .then((stream) => {
-      if (videoRef.value) videoRef.value.srcObject = stream;
-    })
-    .catch((err) => console.error('❌ Cannot access webcam!', err));
+  navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+    if (videoRef.value) videoRef.value.srcObject = stream;
+  });
 };
 
+// Challenge generator
 const getRandomChallenge = () => {
   const challenges = ['turn left', 'turn right', 'blink'];
   return challenges[Math.floor(Math.random() * challenges.length)];
 };
 
-const detectSharpChanges = (prevFrame, currentFrame, width, height) => {
+// Sharp brightness/luminance change detector
+const detectSharpChanges = (prev, current, width, height) => {
+  let diff = 0;
   const threshold = 50;
-  let diffPixels = 0;
-  for (let i = 0; i < prevFrame.data.length; i += 4) {
-    const diff = Math.abs(prevFrame.data[i] - currentFrame.data[i]) +
-                 Math.abs(prevFrame.data[i + 1] - currentFrame.data[i + 1]) +
-                 Math.abs(prevFrame.data[i + 2] - currentFrame.data[i + 2]);
-    if (diff > threshold) diffPixels++;
+  for (let i = 0; i < prev.data.length; i += 4) {
+    const delta = Math.abs(prev.data[i] - current.data[i]) +
+                  Math.abs(prev.data[i + 1] - current.data[i + 1]) +
+                  Math.abs(prev.data[i + 2] - current.data[i + 2]);
+    if (delta > threshold) diff++;
   }
-  return diffPixels > (width * height * 0.05);
+  return diff > width * height * 0.05;
 };
 
-const isSpoofed = (landmarks, canvasCtx, prevFrame, currentFrame, width, height) => {
-  const glareRegion = landmarks.getLeftEye().concat(landmarks.getRightEye());
+// Spoofing detection (glare + sharp frame diff)
+const isSpoofed = (landmarks, ctx, prevFrame, currentFrame, width, height) => {
+  const eyePoints = landmarks.getLeftEye().concat(landmarks.getRightEye());
   let totalBrightness = 0;
-
-  glareRegion.forEach(point => {
-    const x = Math.floor(point.x);
-    const y = Math.floor(point.y);
-    const pixel = canvasCtx.getImageData(x, y, 1, 1).data;
-    const brightness = (pixel[0] + pixel[1] + pixel[2]) / 3;
-    totalBrightness += brightness;
+  eyePoints.forEach(pt => {
+    const px = ctx.getImageData(Math.floor(pt.x), Math.floor(pt.y), 1, 1).data;
+    totalBrightness += (px[0] + px[1] + px[2]) / 3;
   });
-
-  const avgBrightness = totalBrightness / glareRegion.length;
-  const screenGlareDetected = avgBrightness > 240;
-
-  const sharpChangeDetected = detectSharpChanges(prevFrame, currentFrame, width, height);
-
-  return screenGlareDetected || sharpChangeDetected;
+  const avgBrightness = totalBrightness / eyePoints.length;
+  const glareDetected = avgBrightness > 240;
+  const sharpChange = detectSharpChanges(prevFrame, currentFrame, width, height);
+  return glareDetected || sharpChange;
 };
 
+// Liveness check loop
 const startLivenessCheck = async () => {
   loading.value = true;
   challenge.value = getRandomChallenge();
-  message.value = `👁️ Please ${challenge.value}...`;
+  message.value = `Please ${challenge.value}...`;
+  messageColor.value = 'info';
 
-  const timeout = 15000;
-  const startTime = Date.now();
-  let blinked = false;
-  let turned = false;
-  let prevFrame = null;
+  const timeout = 20000;
+  const start = Date.now();
+  let blinked = false, turned = false, prev = null;
 
-  const detectActions = async () => {
-    const elapsed = Date.now() - startTime;
-    if (elapsed > timeout) {
-      message.value = "❌ Liveness check failed. Try again.";
+  const loop = async () => {
+    if (Date.now() - start > timeout) {
+      message.value = "Liveness check failed. Try again.";
+      messageColor.value = 'error';
       loading.value = false;
       return;
     }
 
-    const detections = await faceapi
-      .detectSingleFace(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+    const detection = await faceapi.detectSingleFace(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
       .withFaceLandmarks();
-
-    if (!detections) {
-      requestAnimationFrame(detectActions);
+    if (!detection) {
+      requestAnimationFrame(loop);
       return;
     }
 
-    const landmarks = detections.landmarks;
+    const landmarks = detection.landmarks;
     const leftEye = landmarks.getLeftEye();
     const rightEye = landmarks.getRightEye();
     const nose = landmarks.getNose();
+
     const canvas = document.createElement('canvas');
     canvas.width = videoRef.value.videoWidth;
     canvas.height = videoRef.value.videoHeight;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(videoRef.value, 0, 0);
-    const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    if (prevFrame && isSpoofed(landmarks, ctx, prevFrame, currentFrame, canvas.width, canvas.height)) {
-      message.value = "❌ Spoofing attempt detected (glare or abnormal frame change).";
+    if (prev && isSpoofed(landmarks, ctx, prev, current, canvas.width, canvas.height)) {
+      message.value = "Spoofing detected. Aborted.";
+      messageColor.value = 'error';
       loading.value = false;
       return;
     }
-    prevFrame = currentFrame;
+    prev = current;
 
-    const eyeOpenRatio = (eye) => Math.abs(eye[1].y - eye[5].y) / Math.abs(eye[0].x - eye[3].x);
-    const leftRatio = eyeOpenRatio(leftEye);
-    const rightRatio = eyeOpenRatio(rightEye);
-    const avgEAR = (leftRatio + rightRatio) / 2;
-    const CLOSED_THRESHOLD = 0.23;
-    if (avgEAR < CLOSED_THRESHOLD) blinked = true;
+    const ear = (eye) => Math.abs(eye[1].y - eye[5].y) / Math.abs(eye[0].x - eye[3].x);
+    const avgEAR = (ear(leftEye) + ear(rightEye)) / 2;
+    if (avgEAR < 0.23) blinked = true;
 
     const noseX = nose[3].x;
-    if (noseX < videoRef.value.videoWidth * 0.4 || noseX > videoRef.value.videoWidth * 0.6) turned = true;
+    if (noseX < canvas.width * 0.4 || noseX > canvas.width * 0.6) turned = true;
 
     if ((challenge.value === 'blink' && blinked) ||
-        (challenge.value === 'turn right' && noseX < videoRef.value.videoWidth * 0.4) ||
-        (challenge.value === 'turn left' && noseX > videoRef.value.videoWidth * 0.6)) {
+        (challenge.value === 'turn left' && noseX > canvas.width * 0.6) ||
+        (challenge.value === 'turn right' && noseX < canvas.width * 0.4)) {
       livenessConfirmed.value = true;
-      message.value = "✅ Liveness confirmed. Now capture face.";
+      message.value = "Liveness confirmed. Now capture face.";
+      messageColor.value = 'success';
       loading.value = false;
       return;
     }
-
-    requestAnimationFrame(detectActions);
+    requestAnimationFrame(loop);
   };
 
-  detectActions();
+  loop();
 };
 
+// Face capture after liveness confirmation
 const captureFace = async () => {
-  const detections = await faceapi
-    .detectSingleFace(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
-    .withFaceLandmarks()
-    .withFaceDescriptor();
-
-  if (!detections) {
-    message.value = "❌ Only one face must be visible.";
+  const result = await faceapi.detectSingleFace(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+    .withFaceLandmarks().withFaceDescriptor();
+  if (!result) {
+    message.value = "Only one face must be visible.";
+    messageColor.value = 'info';
     return;
   }
 
-  faceDescriptor.value = Array.from(detections.descriptor);
+  faceDescriptor.value = Array.from(result.descriptor);
   const canvas = document.createElement('canvas');
   canvas.width = videoRef.value.videoWidth;
   canvas.height = videoRef.value.videoHeight;
   canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
-  const imageData = canvas.toDataURL('image/jpeg');
-  faceImage.value = imageData;
-  capturedImage.value = imageData;
-  message.value = "✅ Face captured successfully.";
+  const dataURL = canvas.toDataURL('image/jpeg');
+  faceImage.value = dataURL;
+  capturedImage.value = dataURL;
+
+  message.value = "Face captured successfully.";
+  messageColor.value = 'success';
 };
 
+// Fingerprint capture using WebAuthn
 const captureFingerprint = async () => {
   loading.value = true;
   try {
@@ -216,11 +221,8 @@ const captureFingerprint = async () => {
         displayName: fullName.value,
       },
       pubKeyCredParams: [{ alg: -7, type: "public-key" }],
-      authenticatorSelection: {
-        authenticatorAttachment: "platform",
-        userVerification: "preferred",
-      },
-      timeout: 10000,
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "preferred" },
+      timeout: 20000,
       attestation: "none",
     };
 
@@ -231,44 +233,47 @@ const captureFingerprint = async () => {
     canvas.width = videoRef.value.videoWidth;
     canvas.height = videoRef.value.videoHeight;
     canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
-    const imageData = canvas.toDataURL('image/jpeg');
-    fingerprintTemplate.value = imageData;
-    capturedImage.value = imageData;
+    const template = canvas.toDataURL('image/jpeg');
 
-    message.value = "✅ Fingerprint captured using WebAuthn.";
-  } catch (error) {
-    console.error('Fingerprint error:', error);
-    message.value = "❌ Fingerprint capture failed.";
+    fingerprintTemplate.value = template;
+    capturedImage.value = template;
+    message.value = "Fingerprint captured.";
+    messageColor.value = 'success';
+  } catch (err) {
+    message.value = "Fingerprint capture failed.";
+    messageColor.value = 'error';
   } finally {
     loading.value = false;
   }
 };
 
+// Handle capture button
 const handleBiometricAction = async () => {
   if (biometricChoice.value === 'face') {
-    if (!livenessConfirmed.value) {
-      await startLivenessCheck();
-    } else {
-      await captureFace();
-    }
+    if (!livenessConfirmed.value) await startLivenessCheck();
+    else await captureFace();
   } else {
     await captureFingerprint();
   }
 };
 
+// Submit enrollment
 const submitEnrollment = async () => {
   if (!fullName.value || !email.value) {
-    message.value = "❗ Please enter full name and email.";
+    message.value = "Enter name and email.";
+    messageColor.value = 'error';
     return;
   }
 
   if (biometricChoice.value === 'face' && (!faceDescriptor.value || !faceImage.value)) {
-    message.value = "❗ Please capture a face image.";
+    message.value = "Capture face before submitting.";
+    messageColor.value = 'error';
     return;
   }
 
   if (biometricChoice.value === 'fingerprint' && (!fingerprintCredential.value || !fingerprintTemplate.value)) {
-    message.value = "❗ Please capture a fingerprint.";
+    message.value = "Capture fingerprint before submitting.";
+    messageColor.value = 'error';
     return;
   }
 
@@ -284,46 +289,48 @@ const submitEnrollment = async () => {
   };
 
   try {
-    const response = await fetch('http://localhost:8000/api/enroll-user', {
+    const res = await fetch('http://localhost:8000/api/enroll-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
-    if (response.ok) {
-      message.value = "🎉 User enrolled successfully! Redirecting...";
+    if (res.ok) {
+      message.value = "User enrolled successfully! Redirecting...";
+      messageColor.value = 'success';
       setTimeout(() => {
         fullName.value = '';
         email.value = '';
+        livenessConfirmed.value = false;
         faceDescriptor.value = null;
         faceImage.value = null;
         fingerprintCredential.value = null;
         fingerprintTemplate.value = null;
-        livenessConfirmed.value = false;
         capturedImage.value = null;
         router.push('/auth/');
       }, 1500);
     } else {
-      message.value = "❌ Enrollment failed. Try again.";
+      message.value = "Enrollment failed.";
+      messageColor.value = 'error';
     }
-  } catch (error) {
-    console.error('Submit error:', error);
-    message.value = "❌ Enrollment failed.";
+  } catch (err) {
+    message.value = "Network error. Try again.";
+    messageColor.value = 'error';
   } finally {
     loading.value = false;
   }
 };
 
+// Load models and start webcam on mount
 onMounted(async () => {
   await loadFaceModels();
   startVideo();
 });
 </script>
 
-
 <style scoped>
 .title{
-  font-size: 40px;
+  font-size: 20px;
   font-family: Arial, Helvetica, sans-serif;
 }
 .enrollment-form {
@@ -336,11 +343,11 @@ onMounted(async () => {
   width: 80%;
   padding: 10px;
   margin-bottom: 15px;
+  border: 1px solid #2c7be5;
   color: #000;
-  border-color: #2c7be5;
 }
 .video-section {
-  margin: 20px 0;
+  margin: 20px auto;
   border: 2px solid #ccc;
   border-radius: 8px;
   height: 150px;
@@ -368,46 +375,35 @@ video, .captured-img {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
 }
-.capture-btn {
-  margin: 10px;
+.capture-btn, .submit-btn {
+  margin-top: 10px;
   padding: 10px 20px;
-  background-color: #2c7be5;
   color: white;
   border: none;
   border-radius: 5px;
+}
+.capture-btn {
+  background-color: #2c7be5;
 }
 .capture-btn:hover {
   background-color: #1a5cbf;
 }
 .submit-btn {
-  margin-top: 20px;
-  padding: 12px 24px;
   background-color: #28a745;
-  color: white;
-  border: none;
-  border-radius: 5px;
 }
 .submit-btn:hover {
   background-color: #218838;
 }
 .info-text {
   margin-top: 10px;
-  color: #555;
-}
-.message {
-  margin-top: 10px;
   font-weight: bold;
 }
-.message.success {
-  color: green;
-}
-.message.error {
-  color: red;
-}
+.success { color: green; }
+.error { color: red; }
+.info { color: gray; }
 .footer {
-  margin-top: 50px;
-  font-size: 13px;
+  margin-top: 30px;
+  font-size: 12px;
   color: #aaa;
 }
-
 </style>

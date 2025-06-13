@@ -37,14 +37,14 @@
       <!-- Content -->
       <main class="content">
         <div class="welcome-section">
-          <h2 class="welcome-title">Welcome, {{ user.name }}!</h2>
+          <h2 class="welcome-title">Welcome, {{ user.full_name }}!</h2>
           <p class="welcome-text">Here's an overview of your account.</p>
         </div>
 
         <!-- Stats Cards -->
         <div class="stats-grid">
           <div class="stat-card">
-            <h3 class="stat-title">Total Logins</h3>
+            <h3 class="stat-title">Total Activity</h3>
             <p class="stat-value">42</p>
           </div>
           <div class="stat-card">
