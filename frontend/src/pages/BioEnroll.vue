@@ -369,7 +369,7 @@ video, .captured-img {
   width: 100%;
   height: 100%;
   background-color: #2c7be5;
-  animation: progressAnim 1.5s linear infinite;
+  animation: progressAnim 1.4s linear infinite;
 }
 @keyframes progressAnim {
   0% { transform: translateX(-100%); }
