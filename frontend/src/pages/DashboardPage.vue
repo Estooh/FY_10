@@ -2,46 +2,29 @@
   <div class="dashboard-container">
     <!-- Sidebar -->
     <aside class="sidebar">
-      <div class="sidebar-header">
-        My Dashboard
-      </div>
+      <div class="sidebar-header">My Dashboard</div>
       <nav class="sidebar-nav">
         <ul>
-          <li>
-            <router-link to="/dashboard" class="nav-link">
-              Dashboard
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/profile" class="nav-link">
-              Profile
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/settings" class="nav-link">
-              Settings
-            </router-link>
-          </li>
+          <li><router-link to="/dashboard" class="nav-link">Dashboard</router-link></li>
+          <li><router-link to="/profile" class="nav-link">Profile</router-link></li>
+          <li><router-link to="/settings" class="nav-link">Settings</router-link></li>
         </ul>
       </nav>
     </aside>
 
     <!-- Main Content -->
     <div class="main-content">
-      <!-- Header -->
       <header class="header">
         <h1 class="header-title">Dashboard</h1>
         <button @click="logout" class="logout-button">Logout</button>
       </header>
 
-      <!-- Content -->
       <main class="content">
         <div class="welcome-section">
-          <h2 class="welcome-title">Welcome, {{ user.full_name }}!</h2>
+          <h2 class="welcome-title">Welcome, {{ user.full_name || 'User' }}!</h2>
           <p class="welcome-text">Here's an overview of your account.</p>
         </div>
 
-        <!-- Stats Cards -->
         <div class="stats-grid">
           <div class="stat-card">
             <h3 class="stat-title">Total Activity</h3>
@@ -56,77 +39,74 @@
             <p class="stat-value">3</p>
           </div>
         </div>
+
+        <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
       </main>
     </div>
   </div>
 </template>
 
-<script>
-import { defineComponent, ref, onMounted } from 'vue';
+<script setup>
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 
-export default defineComponent({
-  name: 'Dashboard',
-  setup() {
-    const router = useRouter();
-    const user = ref({ name: 'Loading...' });
+const router = useRouter();
+const user = ref({});
+const errorMessage = ref('');
 
-    const fetchUser = async () => {
-      try {
-        const response = await fetch('http://127.0.0.1:8000/api/user', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          user.value = data;
-        } else {
-          console.error('Failed to fetch user data');
-        }
-      } catch (error) {
-        console.error('Error fetching user:', error);
-      }
-    };
+const fetchUser = async () => {
+  const token = localStorage.getItem('token');
+  if (!token) {
+    router.push('/auth/');
+    return;
+  }
 
-    const logout = async () => {
   try {
-    // Send a request to the server to invalidate the session
-    await fetch('http://127.0.0.1:8000/api/logout', {
-      method: 'POST',
+    const response = await fetch('http://127.0.0.1:8000/api/dashboard', {
+      method: 'GET',
       headers: {
-        'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`,
       },
     });
 
-    // Clear client-side authentication data
-    localStorage.removeItem('token');
-    // If you're using Vuex or any state management, reset the user state here
+    if (response.status === 401) {
+      throw new Error('Unauthorized');
+    }
 
-    // Redirect to the login page
-    router.push('/auth/');
-  } catch (error) {
-    console.error('Error during logout:', error);
-    // Handle errors appropriately
+    const data = await response.json();
+    user.value = data;
+  } catch (err) {
+    console.error('Fetch user error:', err);
+    localStorage.removeItem('token');
+    errorMessage.value = 'Session expired or unauthorized. Redirecting...';
+    setTimeout(() => router.push('/auth/'), 2000);
   }
 };
 
-
-
-    onMounted(() => {
-      fetchUser();
+const logout = async () => {
+  try {
+    const token = localStorage.getItem('token');
+    await fetch('http://127.0.0.1:8000/api/logout', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
     });
+  } catch (err) {
+    console.warn('Logout failed:', err);
+  } finally {
+    localStorage.removeItem('token');
+    router.push('/auth/');
+  }
+};
 
-    return {
-      user,
-      logout,
-    };
-  },
-});
+onMounted(fetchUser);
 </script>
 
 <style scoped>
+/* Same styles as before (no change) */
 .dashboard-container {
   display: flex;
   height: 100vh;
@@ -134,7 +114,6 @@ export default defineComponent({
   font-family: Arial, sans-serif;
 }
 
-/* Sidebar */
 .sidebar {
   width: 250px;
   background-color: #ffffff;
@@ -149,13 +128,10 @@ export default defineComponent({
   border-bottom: 1px solid #e5e7eb;
 }
 
-.sidebar-nav {
-  margin-top: 20px;
-}
-
 .sidebar-nav ul {
   list-style: none;
   padding: 0;
+  margin: 0;
 }
 
 .nav-link {
@@ -171,14 +147,12 @@ export default defineComponent({
   background-color: #dbeafe;
 }
 
-/* Main Content */
 .main-content {
   flex: 1;
   display: flex;
   flex-direction: column;
 }
 
-/* Header */
 .header {
   background-color: #ffffff;
   padding: 20px;
@@ -200,14 +174,12 @@ export default defineComponent({
   color: #ef4444;
   cursor: pointer;
   font-size: 0.9rem;
-  transition: text-decoration 0.2s;
 }
 
 .logout-button:hover {
   text-decoration: underline;
 }
 
-/* Content */
 .content {
   flex: 1;
   padding: 30px;
@@ -229,7 +201,6 @@ export default defineComponent({
   margin-top: 5px;
 }
 
-/* Stats Grid */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -253,5 +224,11 @@ export default defineComponent({
   font-size: 1.5rem;
   font-weight: bold;
   color: #2563eb;
+}
+
+.error-message {
+  margin-top: 20px;
+  color: red;
+  font-weight: bold;
 }
 </style>

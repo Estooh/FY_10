@@ -5,7 +5,7 @@
       style="width: 100%; height: 100vh"
     >
       <router-view>
-        
+
       </router-view>
     </q-page-container>
   </q-layout>
@@ -18,7 +18,7 @@ const router = useRouter();
 </script>
 <style>
 .bg {
-  background-image: url("/bg.png");
+  /* background-image: url("/bg.png"); */
   background-size: cover;
   background-repeat: no-repeat;
 }
