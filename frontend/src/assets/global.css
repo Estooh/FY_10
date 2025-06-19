@@ -1,0 +1,8 @@
+body {
+  background: linear-gradient(135deg, #1e726e, #2a8b98); /* Blue gradient background */
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  color: #fff; /* Ensures text is readable on a dark background */
+}
