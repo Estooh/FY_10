@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use App\Models\EnrollUser;
 
 class FaceAuthController extends Controller
@@ -10,12 +11,20 @@ class FaceAuthController extends Controller
     public function authenticate(Request $request)
     {
         $inputDescriptor = $request->input('descriptor');
+        $nonce = $request->input('nonce');
 
         if (!$inputDescriptor || !is_array($inputDescriptor)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Invalid or missing face descriptor.'
             ], 400);
+        }
+
+        if (!$nonce || !Cache::pull("face_nonce_{$nonce}")) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid or expired nonce. Possible replay attempt.'
+            ], 403);
         }
 
         // Retrieve users with face biometrics
@@ -27,7 +36,7 @@ class FaceAuthController extends Controller
         $bestDistance = PHP_FLOAT_MAX;
 
         foreach ($users as $user) {
-            $storedDescriptor = $user->face_descriptor;  // Should be cast to array
+            $storedDescriptor = $user->face_descriptor;
 
             if (is_array($storedDescriptor)) {
                 $distance = $this->euclideanDistance($inputDescriptor, $storedDescriptor);
@@ -42,25 +51,21 @@ class FaceAuthController extends Controller
         $threshold = 0.55;
 
         if ($bestMatch && $bestDistance <= $threshold) {
-            // Optionally generate token here, e.g., Sanctum token
-            // $token = $bestMatch->createToken('auth_token')->plainTextToken;
-
             return response()->json([
                 'success' => true,
                 'message' => 'Face authenticated successfully!',
                 'user' => [
                     'id' => $bestMatch->id,
-                    'full_name' => $bestMatch->full_name,  // Adjust field name accordingly
+                    'full_name' => $bestMatch->full_name,
                     'email' => $bestMatch->email,
                 ],
                 'distance' => $bestDistance,
-                // 'token' => $token,
             ], 200);
         }
 
         return response()->json([
             'success' => false,
-            'message' => '❌ Face not recognized!'
+            'message' => 'Face not recognized!'
         ], 401);
     }
 

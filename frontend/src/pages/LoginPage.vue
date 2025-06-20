@@ -2,18 +2,15 @@
   <div class="auth-form">
     <h2 class="title">Biometric Authentication Framework</h2>
 
-    <!-- Video / Captured Image Section -->
     <div class="video-section">
       <video v-show="!authenticatedImage" ref="videoRef" autoplay playsinline muted></video>
       <img v-show="authenticatedImage" :src="authenticatedImage" alt="Captured" class="captured-img" />
     </div>
 
-    <!-- Progress Bar -->
     <div v-if="loading" class="progress-bar">
       <div class="progress"></div>
     </div>
 
-    <!-- Buttons -->
     <div class="buttons">
       <button @click="handleLivenessThenAuthenticate" class="auth-btn">
         <Eye size="20" /> Authenticate Face
@@ -23,13 +20,11 @@
       </button>
     </div>
 
-    <!-- Help Link -->
     <p class="help-text">
       Don't have an account?
       <router-link to="/enroll-user" class="enroll-link">Enroll Now!</router-link>
     </p>
 
-    <!-- Message -->
     <p :class="['message', messageColor]">{{ message }}</p>
 
     <footer class="footer">&copy; 2025 Final Year Project:10. All rights reserved.</footer>
@@ -51,6 +46,7 @@ const message = ref('');
 const messageColor = ref('');
 const challenge = ref('');
 const livenessPassed = ref(false);
+const nonce = ref('');
 
 const getCookie = (name) => {
   const value = `; ${document.cookie}`;
@@ -101,8 +97,7 @@ const performLivenessCheck = async () => {
       return;
     }
 
-    const detections = await faceapi.detectAllFaces(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
-      .withFaceLandmarks();
+    const detections = await faceapi.detectAllFaces(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 })).withFaceLandmarks();
 
     if (detections.length !== 1) {
       requestAnimationFrame(check);
@@ -138,6 +133,22 @@ const performLivenessCheck = async () => {
   requestAnimationFrame(check);
 };
 
+const fetchNonce = async () => {
+  try {
+    const response = await fetch('http://localhost:8000/api/auth/nonce');
+    if (response.ok) {
+      const data = await response.json();
+      nonce.value = data.nonce;
+    } else {
+      throw new Error('Failed to fetch nonce');
+    }
+  } catch (error) {
+    console.error('Nonce fetch failed:', error);
+    message.value = 'Security error: unable to fetch nonce.';
+    messageColor.value = 'error';
+  }
+};
+
 const authenticateFace = async () => {
   loading.value = true;
 
@@ -163,11 +174,7 @@ const authenticateFace = async () => {
   authenticatedImage.value = canvas.toDataURL('image/jpeg');
 
   try {
-    // Get CSRF cookie first (required for Sanctum session)
-    await fetch('http://localhost:8000/sanctum/csrf-cookie', {
-      credentials: 'include',
-    });
-
+    await fetch('http://localhost:8000/sanctum/csrf-cookie', { credentials: 'include' });
     const csrfToken = getCookie('XSRF-TOKEN');
 
     const res = await fetch('http://localhost:8000/api/auth/face', {
@@ -178,7 +185,7 @@ const authenticateFace = async () => {
         'Accept': 'application/json',
       },
       credentials: 'include',
-      body: JSON.stringify({ descriptor }),
+      body: JSON.stringify({ descriptor, nonce: nonce.value }),
     });
 
     if (res.ok) {
@@ -202,12 +209,20 @@ const authenticateFace = async () => {
 };
 
 const handleLivenessThenAuthenticate = async () => {
+  if (!nonce.value) {
+    await fetchNonce();
+    if (!nonce.value) return; // Stop if nonce failed to fetch
+  }
+
   if (!livenessPassed.value) {
     await performLivenessCheck();
-  } else {
+  }
+
+  if (livenessPassed.value) {
     await authenticateFace();
   }
 };
+
 
 const authenticateFingerprint = async () => {
   try {
@@ -232,6 +247,7 @@ onMounted(async () => {
   startVideo();
 });
 </script>
+
 
 
 <style scoped>
