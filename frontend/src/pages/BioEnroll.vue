@@ -8,9 +8,9 @@
 
       <center>
         <div class="input radio-group">
-        <label><input type="radio" value="face" v-model="biometricChoice" /> Use Face</label>
-        <label><input type="radio" value="fingerprint" v-model="biometricChoice" style="margin-left: 20px;" /> Use Fingerprint</label>
-      </div>
+          <label><input type="radio" value="face" v-model="biometricChoice" /> Use Face</label>
+          <label><input type="radio" value="fingerprint" v-model="biometricChoice" style="margin-left: 20px;" /> Use Fingerprint</label>
+        </div>
       </center>
 
       <div class="video-section" v-if="biometricChoice === 'face'">
@@ -292,7 +292,11 @@ const submitEnrollment = async () => {
   try {
     const res = await fetch('http://localhost:8000/api/enroll-user', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      credentials: 'include', // Important!
       body: JSON.stringify(payload),
     });
 
@@ -314,10 +318,15 @@ const submitEnrollment = async () => {
 };
 
 onMounted(async () => {
+  //Get CSRF cookie before any POST request
+  await fetch('http://localhost:8000/sanctum/csrf-cookie', {
+    credentials: 'include',
+  });
   await loadFaceModels();
   startVideo();
 });
 </script>
+
 
 <style scoped>
 .title { font-size: 20px; font-family: Arial, sans-serif; }

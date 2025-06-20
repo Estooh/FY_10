@@ -4,6 +4,8 @@ use Illuminate\Support\Str;
 
 return [
 
+    'domain' => env('SESSION_DOMAIN', null),  // should be 'localhost' or your dev domain
+
     /*
     |--------------------------------------------------------------------------
     | Default Session Driver

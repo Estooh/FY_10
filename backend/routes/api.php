@@ -23,13 +23,8 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 Route::get('/dashboard', function (Request $request) {
-    return response()->json([
-        'full_name' => $request->user()->name,
-        'email' => $request->user()->email,
-    ]);
+    return response()->json(['user' => $request->user()]);
 });
-
-// Public Routes
 Route::post('/enroll-user', [EnrollmentController::class, 'store']);
 Route::post('/auth/face', [FaceAuthController::class, 'authenticate']);
 Route::post('/auth/fingerprint', [FingerprintAuthController::class, 'authenticate']);

@@ -54,31 +54,36 @@ const router = useRouter();
 const user = ref({});
 const errorMessage = ref('');
 
-const fetchUser = async () => {
-  const token = localStorage.getItem('token');
-  if (!token) {
-    router.push('/auth/');
-    return;
-  }
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift());
+};
 
+const fetchUser = async () => {
   try {
-    const response = await fetch('http://127.0.0.1:8000/api/dashboard', {
+    // Fetch CSRF token first to initialize session (required by Sanctum)
+    await fetch('http://localhost:8000/sanctum/csrf-cookie', {
+      credentials: 'include',
+    });
+
+    const csrfToken = getCookie('XSRF-TOKEN');
+
+    const response = await fetch('http://localhost:8000/api/dashboard', {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
-        'Authorization': `Bearer ${token}`,
+        'X-XSRF-TOKEN': csrfToken,
       },
+      credentials: 'include',
     });
 
-    if (response.status === 401) {
-      throw new Error('Unauthorized');
-    }
+    if (response.status === 401) throw new Error('Unauthorized');
 
     const data = await response.json();
     user.value = data;
   } catch (err) {
     console.error('Fetch user error:', err);
-    localStorage.removeItem('token');
     errorMessage.value = 'Session expired or unauthorized. Redirecting...';
     setTimeout(() => router.push('/auth/'), 2000);
   }
@@ -86,24 +91,30 @@ const fetchUser = async () => {
 
 const logout = async () => {
   try {
-    const token = localStorage.getItem('token');
-    await fetch('http://127.0.0.1:8000/api/logout', {
+    await fetch('http://localhost:8000/sanctum/csrf-cookie', {
+      credentials: 'include',
+    });
+
+    const csrfToken = getCookie('XSRF-TOKEN');
+
+    await fetch('http://localhost:8000/api/logout', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
+        'X-XSRF-TOKEN': csrfToken,
       },
+      credentials: 'include',
     });
   } catch (err) {
     console.warn('Logout failed:', err);
   } finally {
-    localStorage.removeItem('token');
     router.push('/auth/');
   }
 };
 
 onMounted(fetchUser);
 </script>
+
 
 <style scoped>
 /* Same styles as before (no change) */

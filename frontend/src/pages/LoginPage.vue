@@ -52,6 +52,12 @@ const messageColor = ref('');
 const challenge = ref('');
 const livenessPassed = ref(false);
 
+const getCookie = (name) => {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift());
+};
+
 const loadModels = async () => {
   const MODEL_URL = '/models';
   await Promise.all([
@@ -156,20 +162,39 @@ const authenticateFace = async () => {
   canvas.getContext('2d').drawImage(videoRef.value, 0, 0);
   authenticatedImage.value = canvas.toDataURL('image/jpeg');
 
-  const res = await fetch('http://127.0.0.1:8000/api/auth/face', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ descriptor })
-  });
+  try {
+    // Get CSRF cookie first (required for Sanctum session)
+    await fetch('http://localhost:8000/sanctum/csrf-cookie', {
+      credentials: 'include',
+    });
 
-  if (res.ok) {
-    const data = await res.json();
-    localStorage.setItem('token', data.token);
-    message.value = 'Authenticated successfully!';
-    messageColor.value = 'success';
-    await router.push('/dashboard');
-  } else {
-    message.value = 'Face not recognized.';
+    const csrfToken = getCookie('XSRF-TOKEN');
+
+    const res = await fetch('http://localhost:8000/api/auth/face', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-XSRF-TOKEN': csrfToken,
+        'Accept': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ descriptor }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem('token', data.token || 'dummy-token');
+      message.value = 'Authenticated successfully!';
+      messageColor.value = 'success';
+      await router.push('/dashboard');
+    } else {
+      const errData = await res.json();
+      message.value = errData.message || 'Face not recognized.';
+      messageColor.value = 'error';
+    }
+  } catch (error) {
+    console.error(error);
+    message.value = 'Authentication failed. Server error.';
     messageColor.value = 'error';
   }
 
@@ -207,6 +232,7 @@ onMounted(async () => {
   startVideo();
 });
 </script>
+
 
 <style scoped>
 .title {

@@ -1,7 +1,5 @@
 <?php
 
-// app/Http/Controllers/FaceAuthController.php
-
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
@@ -20,6 +18,7 @@ class FaceAuthController extends Controller
             ], 400);
         }
 
+        // Retrieve users with face biometrics
         $users = EnrollUser::where('biometric_method', 'face')
             ->whereNotNull('face_descriptor')
             ->get();
@@ -28,7 +27,7 @@ class FaceAuthController extends Controller
         $bestDistance = PHP_FLOAT_MAX;
 
         foreach ($users as $user) {
-            $storedDescriptor = $user->face_descriptor;
+            $storedDescriptor = $user->face_descriptor;  // Should be cast to array
 
             if (is_array($storedDescriptor)) {
                 $distance = $this->euclideanDistance($inputDescriptor, $storedDescriptor);
@@ -43,15 +42,19 @@ class FaceAuthController extends Controller
         $threshold = 0.55;
 
         if ($bestMatch && $bestDistance <= $threshold) {
+            // Optionally generate token here, e.g., Sanctum token
+            // $token = $bestMatch->createToken('auth_token')->plainTextToken;
+
             return response()->json([
                 'success' => true,
                 'message' => 'Face authenticated successfully!',
                 'user' => [
                     'id' => $bestMatch->id,
-                    'name' => $bestMatch->name,
+                    'full_name' => $bestMatch->full_name,  // Adjust field name accordingly
                     'email' => $bestMatch->email,
                 ],
-                'distance' => $bestDistance
+                'distance' => $bestDistance,
+                // 'token' => $token,
             ], 200);
         }
 
