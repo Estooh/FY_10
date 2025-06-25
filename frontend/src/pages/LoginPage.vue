@@ -7,9 +7,7 @@
       <img v-show="authenticatedImage" :src="authenticatedImage" alt="Captured" class="captured-img" />
     </div>
 
-    <div v-if="loading" class="progress-bar">
-      <div class="progress"></div>
-    </div>
+    <div v-if="loading" class="progress-bar"><div class="progress"></div></div>
 
     <div class="buttons">
       <button @click="handleLivenessThenAuthenticate" class="auth-btn">
@@ -26,7 +24,6 @@
     </p>
 
     <p :class="['message', messageColor]">{{ message }}</p>
-
     <footer class="footer">&copy; 2025 Final Year Project:10. All rights reserved.</footer>
   </div>
 </template>
@@ -41,7 +38,6 @@ const router = useRouter();
 const videoRef = ref(null);
 const loading = ref(false);
 const authenticatedImage = ref(null);
-const faceDescriptor = ref(null);
 const message = ref('');
 const messageColor = ref('');
 const challenge = ref('');
@@ -59,18 +55,17 @@ const loadModels = async () => {
   await Promise.all([
     faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
     faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
   ]);
 };
 
 const startVideo = () => {
-  navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
-    if (videoRef.value) videoRef.value.srcObject = stream;
-  }).catch((err) => {
-    console.error('Webcam error:', err);
-    message.value = 'Webcam access denied!';
-    messageColor.value = 'error';
-  });
+  navigator.mediaDevices.getUserMedia({ video: true })
+    .then(stream => videoRef.value.srcObject = stream)
+    .catch(() => {
+      message.value = 'Webcam access denied!';
+      messageColor.value = 'error';
+    });
 };
 
 const getRandomChallenge = () => {
@@ -91,13 +86,15 @@ const performLivenessCheck = async () => {
 
   const check = async () => {
     if (Date.now() - startTime > timeout) {
-      message.value = 'Face not detected. Try again...!';
+      message.value = 'Face not detected. Try again!';
       messageColor.value = 'error';
       loading.value = false;
       return;
     }
 
-    const detections = await faceapi.detectAllFaces(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 })).withFaceLandmarks();
+    const detections = await faceapi
+      .detectAllFaces(videoRef.value, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 }))
+      .withFaceLandmarks();
 
     if (detections.length !== 1) {
       requestAnimationFrame(check);
@@ -108,21 +105,21 @@ const performLivenessCheck = async () => {
     const leftEye = landmarks.getLeftEye();
     const rightEye = landmarks.getRightEye();
     const noseX = landmarks.getNose()[3].x;
-    const canvasWidth = videoRef.value.videoWidth;
+    const width = videoRef.value.videoWidth;
 
     const EAR = (eye) => Math.abs(eye[1].y - eye[5].y) / Math.abs(eye[0].x - eye[3].x);
     const avgEAR = (EAR(leftEye) + EAR(rightEye)) / 2;
     if (avgEAR < 0.23) blinked = true;
-    if (noseX < canvasWidth * 0.4 || noseX > canvasWidth * 0.6) turned = true;
+    if (noseX < width * 0.4 || noseX > width * 0.6) turned = true;
 
     const passed =
       (challenge.value === 'blink' && blinked) ||
-      (challenge.value === 'turn left' && noseX > canvasWidth * 0.6) ||
-      (challenge.value === 'turn right' && noseX < canvasWidth * 0.4);
+      (challenge.value === 'turn left' && noseX > width * 0.6) ||
+      (challenge.value === 'turn right' && noseX < width * 0.4);
 
     if (passed) {
       livenessPassed.value = true;
-      message.value = 'Face is successfully detected. Now authenticate...!';
+      message.value = 'Face verified. Authenticating...';
       messageColor.value = 'success';
       loading.value = false;
     } else {
@@ -135,16 +132,11 @@ const performLivenessCheck = async () => {
 
 const fetchNonce = async () => {
   try {
-    const response = await fetch('http://localhost:8000/api/auth/nonce');
-    if (response.ok) {
-      const data = await response.json();
-      nonce.value = data.nonce;
-    } else {
-      throw new Error('Failed to fetch nonce');
-    }
-  } catch (error) {
-    console.error('Nonce fetch failed:', error);
-    message.value = 'Security error: unable to fetch nonce.';
+    const response = await fetch('http://127.0.0.1:8000/api/auth/nonce', { credentials: 'include' });
+    const data = await response.json();
+    nonce.value = data.nonce;
+  } catch (err) {
+    message.value = 'Nonce fetch failed';
     messageColor.value = 'error';
   }
 };
@@ -165,8 +157,6 @@ const authenticateFace = async () => {
   }
 
   const descriptor = Array.from(detections[0].descriptor);
-  faceDescriptor.value = descriptor;
-
   const canvas = document.createElement('canvas');
   canvas.width = videoRef.value.videoWidth;
   canvas.height = videoRef.value.videoHeight;
@@ -174,10 +164,17 @@ const authenticateFace = async () => {
   authenticatedImage.value = canvas.toDataURL('image/jpeg');
 
   try {
-    await fetch('http://localhost:8000/sanctum/csrf-cookie', { credentials: 'include' });
-    const csrfToken = getCookie('XSRF-TOKEN');
+    await fetch('http://127.0.0.1:8000/sanctum/csrf-cookie', { credentials: 'include' });
 
-    const res = await fetch('http://localhost:8000/api/auth/face', {
+    const csrfToken = getCookie('XSRF-TOKEN');
+    if (!csrfToken) {
+      message.value = 'CSRF token missing';
+      messageColor.value = 'error';
+      loading.value = false;
+      return;
+    }
+
+    const response = await fetch('http://127.0.0.1:8000/api/auth/face', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -188,20 +185,20 @@ const authenticateFace = async () => {
       body: JSON.stringify({ descriptor, nonce: nonce.value }),
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      localStorage.setItem('token', data.token || 'dummy-token');
+    const result = await response.json();
+
+    if (response.ok && result.success) {
       message.value = 'Authenticated successfully!';
       messageColor.value = 'success';
-      await router.push('/dashboard');
+      localStorage.setItem('token', 'authenticated');
+      router.push('/dashboard');
     } else {
-      const errData = await res.json();
-      message.value = errData.message || 'Face not recognized.';
+      message.value = result.message || 'Authentication failed';
       messageColor.value = 'error';
     }
-  } catch (error) {
-    console.error(error);
-    message.value = 'Authentication failed. Server error.';
+  } catch (err) {
+    console.error('Error:', err);
+    message.value = 'Request error. Check backend or CORS.';
     messageColor.value = 'error';
   }
 
@@ -209,34 +206,29 @@ const authenticateFace = async () => {
 };
 
 const handleLivenessThenAuthenticate = async () => {
-  if (!nonce.value) {
-    await fetchNonce();
-    if (!nonce.value) return; // Stop if nonce failed to fetch
-  }
-
   if (!livenessPassed.value) {
     await performLivenessCheck();
-  }
-
-  if (livenessPassed.value) {
-    await authenticateFace();
+  } else {
+    await fetchNonce();
+    if (nonce.value) {
+      await authenticateFace();
+    }
   }
 };
-
 
 const authenticateFingerprint = async () => {
   try {
     const cred = await navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32) } });
     if (cred) {
-      message.value = 'Fingerprint is recognized successfully!';
+      message.value = 'Fingerprint authenticated!';
       messageColor.value = 'success';
-      localStorage.setItem('token', 'dummy-fingerprint-token');
-      await router.push('/dashboard');
+      localStorage.setItem('token', 'fingerprint-token');
+      router.push('/dashboard');
     } else {
-      message.value = 'Fingerprint is not recognized. Try again...!';
+      message.value = 'Fingerprint failed!';
       messageColor.value = 'error';
     }
-  } catch (err) {
+  } catch {
     message.value = 'Fingerprint error!';
     messageColor.value = 'error';
   }
@@ -247,7 +239,6 @@ onMounted(async () => {
   startVideo();
 });
 </script>
-
 
 
 <style scoped>
